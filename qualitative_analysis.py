@@ -224,7 +224,7 @@ def test_time_adapt_eval(val_loader, model, model_state, optimizer, optim_state,
     os.makedirs(args.out_dir, exist_ok=True)
     found_success = 0
     found_failure = 0
-    target_count = 3
+    target_count = 5
     print(f"--- INIZIO ANALISI QUALITATIVA ---\nCerco {target_count} Successi e {target_count} Fallimenti...")
 
     model.eval()
