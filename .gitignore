@@ -19,3 +19,6 @@ thumbs.db
 .DS_Store
 .idea
 *.log
+.cache/
+**/.cache/
+~/.cache/
