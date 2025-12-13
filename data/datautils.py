@@ -57,6 +57,44 @@ def build_dataset(set_id, transform, data_root, mode='test', n_shot=None, split=
         
     return testset
 
+def build_subdataset(set_id, transform, data_root, mode='test', n_shot=None, split="all", bongard_anno=False, max_samples=2000): # <--- MODIFICA 1: Aggiunto parametro con default 2000
+    
+    # --- Codice originale per creare il dataset completo ---
+    if set_id == 'I':
+        # ImageNet validation set
+        testdir = os.path.join(os.path.join(data_root, ID_to_DIRNAME[set_id]), 'val')
+        testset = datasets.ImageFolder(testdir, transform=transform)
+    elif set_id in ['A', 'K', 'R', 'V']:
+        testdir = os.path.join(data_root, ID_to_DIRNAME[set_id])
+        testset = datasets.ImageFolder(testdir, transform=transform)
+    elif set_id in fewshot_datasets:
+        if mode == 'train' and n_shot:
+            testset = build_fewshot_dataset(set_id, os.path.join(data_root, ID_to_DIRNAME[set_id.lower()]), transform, mode=mode, n_shot=n_shot)
+        else:
+            testset = build_fewshot_dataset(set_id, os.path.join(data_root, ID_to_DIRNAME[set_id.lower()]), transform, mode=mode)
+    elif set_id == 'bongard':
+        assert isinstance(transform, Tuple)
+        base_transform, query_transform = transform
+        testset = BongardDataset(data_root, split, mode, base_transform, query_transform, bongard_anno)
+    else:
+        raise NotImplementedError
+    
+    # --- MODIFICA 2: Blocco di riduzione del dataset ---
+    # Se max_samples è definito e il dataset è più grande del limite, facciamo il taglio
+    if max_samples is not None and len(testset) > max_samples:
+        print(f"Riduzione dataset da {len(testset)} a {max_samples} immagini...")
+        
+        # Per riproducibilità, puoi fissare il seed (opzionale)
+        np.random.seed(42) 
+        
+        # Scegliamo indici casuali
+        indices = np.random.choice(len(testset), max_samples, replace=False)
+        
+        # Creiamo il subset
+        testset = torch.utils.data.Subset(testset, indices)
+    # ---------------------------------------------------
+
+    return testset
 
 # AugMix Transforms
 def get_preaugment():

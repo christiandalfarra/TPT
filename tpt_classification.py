@@ -26,7 +26,7 @@ import torchvision.models as models
 from clip.custom_clip import get_coop
 from clip.cocoop import get_cocoop
 from data.imagnet_prompts import imagenet_classes
-from data.datautils import AugMixAugmenter, build_dataset
+from data.datautils import AugMixAugmenter, build_dataset, build_subdataset
 from utils.tools import Summary, AverageMeter, ProgressMeter, accuracy, load_model_weight, set_random_seed
 from data.cls_to_names import *
 from data.fewshot_datasets import fewshot_datasets
@@ -208,7 +208,8 @@ def main_worker(gpu, args):
         else:
             model.reset_classnames(classnames, args.arch)
 
-        val_dataset = build_dataset(set_id, data_transform, args.data, mode=args.dataset_mode)
+        #val_dataset = build_dataset(set_id, data_transform, args.data, mode=args.dataset_mode)
+        val_dataset = build_subdataset(set_id, data_transform, args.data, mode=args.dataset_mode, max_samples=2000) # <--- MODIFICA 2: Usato build_subdataset con max_samples=2000
         print("number of test samples: {}".format(len(val_dataset)))
         val_loader = torch.utils.data.DataLoader(
                     val_dataset,
