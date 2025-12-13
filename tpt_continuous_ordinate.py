@@ -27,7 +27,7 @@ import torchvision.models as models
 from clip.custom_clip import get_coop
 from clip.cocoop import get_cocoop
 from data.imagnet_prompts import imagenet_classes
-from data.datautils import AugMixAugmenter, build_dataset, build_subdataset
+from data.datautils import AugMixAugmenter, build_dataset, build_subdataset_sorted
 from utils.tools import Summary, AverageMeter, ProgressMeter, accuracy, load_model_weight, set_random_seed
 from data.cls_to_names import *
 from data.fewshot_datasets import fewshot_datasets
@@ -212,7 +212,7 @@ def main_worker(gpu, args):
 
         #val_dataset = build_dataset(set_id, data_transform, args.data, mode=args.dataset_mode)
         # Usa build_subdataset per limitare il numero di campioni come richiesto
-        val_dataset = build_subdataset(set_id, data_transform, args.data, mode=args.dataset_mode, max_samples=800)
+        val_dataset = build_subdataset_sorted(set_id, data_transform, args.data, mode=args.dataset_mode, max_samples=800)
         
         # --- MODIFICA 1: Ordinamento Indici ---
         # Se stiamo usando un subset casuale, gli indici sono disordinati (es. 5, 100, 2).

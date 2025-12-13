@@ -96,6 +96,68 @@ def build_subdataset(set_id, transform, data_root, mode='test', n_shot=None, spl
 
     return testset
 
+def build_subdataset_sorted(set_id, transform, data_root, mode='test', n_shot=None, split="all", bongard_anno=False, max_samples=2000):
+    
+    # 1. Costruzione del Dataset Completo (Identico a prima)
+    if set_id == 'I':
+        testdir = os.path.join(os.path.join(data_root, ID_to_DIRNAME[set_id]), 'val')
+        testset = datasets.ImageFolder(testdir, transform=transform)
+    elif set_id in ['A', 'K', 'R', 'V']:
+        testdir = os.path.join(data_root, ID_to_DIRNAME[set_id])
+        testset = datasets.ImageFolder(testdir, transform=transform)
+    elif set_id in fewshot_datasets:
+        if mode == 'train' and n_shot:
+            testset = build_fewshot_dataset(set_id, os.path.join(data_root, ID_to_DIRNAME[set_id.lower()]), transform, mode=mode, n_shot=n_shot)
+        else:
+            testset = build_fewshot_dataset(set_id, os.path.join(data_root, ID_to_DIRNAME[set_id.lower()]), transform, mode=mode)
+    elif set_id == 'bongard':
+        assert isinstance(transform, Tuple)
+        base_transform, query_transform = transform
+        testset = BongardDataset(data_root, split, mode, base_transform, query_transform, bongard_anno)
+    else:
+        raise NotImplementedError
+    
+    # 2. Logica di Riduzione Ordinata (Balanced Sampling)
+    if max_samples is not None and len(testset) > max_samples:
+        print(f"Riduzione dataset da {len(testset)} a {max_samples} immagini (MANTENENDO ORDINE CLASSI)...")
+        
+        # Calcoliamo quante classi ci sono
+        # ImageFolder ha l'attributo 'targets' che contiene la label per ogni immagine
+        # Es: targets = [0, 0, 0, 1, 1, 2, 2, 2...]
+        targets = np.array(testset.targets)
+        classes = np.unique(targets)
+        num_classes = len(classes)
+        
+        # Calcoliamo quante immagini prendere per ogni classe per arrivare circa a max_samples
+        samples_per_class = max_samples // num_classes
+        if samples_per_class < 1: samples_per_class = 1 # Minimo 1 immagine per classe
+        
+        print(f"  -> Selezionando prime {samples_per_class} immagini per ognuna delle {num_classes} classi.")
+
+        indices = []
+        
+        # Iteriamo su ogni classe (0, 1, 2...) in ordine
+        for cls_idx in classes:
+            # Trova tutti gli indici nel dataset originale che appartengono a questa classe
+            cls_indices = np.where(targets == cls_idx)[0]
+            
+            # Prendi solo i primi N (dove N = samples_per_class)
+            # Dato che ImageFolder carica i file in ordine alfabetico, 
+            # prendere i primi N mantiene l'ordine deterministico.
+            selected_indices = cls_indices[:samples_per_class]
+            
+            indices.extend(selected_indices)
+        
+        # Tagliamo l'eccesso se per arrotondamento abbiamo superato di poco max_samples
+        indices = indices[:max_samples]
+        
+        # Creiamo il subset con questi indici ordinati
+        testset = torch.utils.data.Subset(testset, indices)
+        
+        # IMPORTANTE: Salviamo gli indici ordinati nel subset (utile per debug o check successivi)
+        testset.indices = indices
+
+    return testset
 # AugMix Transforms
 def get_preaugment():
     return transforms.Compose([
