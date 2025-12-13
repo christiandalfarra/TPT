@@ -209,7 +209,7 @@ def main_worker(gpu, args):
             model.reset_classnames(classnames, args.arch)
 
         #val_dataset = build_dataset(set_id, data_transform, args.data, mode=args.dataset_mode)
-        val_dataset = build_subdataset(set_id, data_transform, args.data, mode=args.dataset_mode, max_samples=2000) # <--- MODIFICA 2: Usato build_subdataset con max_samples=2000
+        val_dataset = build_subdataset(set_id, data_transform, args.data, mode=args.dataset_mode, max_samples=800) # <--- MODIFICA 2: Usato build_subdataset con max_samples=2000
         print("number of test samples: {}".format(len(val_dataset)))
         val_loader = torch.utils.data.DataLoader(
                     val_dataset,
