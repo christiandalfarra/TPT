@@ -119,7 +119,7 @@ def main():
     parser.add_argument('--cocoop', action='store_true', default=False, help="use cocoop")
     parser.add_argument('--load', default=None, type=str, help='path to a pre-trained coop/cocoop')
     parser.add_argument('--seed', type=int, default=0)
-    parser.add_argument('--out_dir', default='./qualitative_report', type=str, help='Output folder for images')
+    parser.add_argument('--out_dir', default='./qualitative_report_r', type=str, help='Output folder for images')
 
     args = parser.parse_args()
     set_random_seed(args.seed)
