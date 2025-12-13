@@ -115,11 +115,11 @@ def main():
     parser.add_argument('--selection_p', default=0.1, type=float, help='confidence selection percentile')
     parser.add_argument('--tta_steps', default=1, type=int, help='test-time-adapt steps')
     parser.add_argument('--n_ctx', default=4, type=int, help='number of tunable tokens')
-    parser.add_argument('--ctx_init', default=None, type=str, help='init tunable prompts')
+    parser.add_argument('--ctx_init', default="a_photo_of_a", type=str, help='init tunable prompts')
     parser.add_argument('--cocoop', action='store_true', default=False, help="use cocoop")
     parser.add_argument('--load', default=None, type=str, help='path to a pre-trained coop/cocoop')
     parser.add_argument('--seed', type=int, default=0)
-    parser.add_argument('--out_dir', default='./qualitative_report_r', type=str, help='Output folder for images')
+    parser.add_argument('--out_dir', default='./qualitative_report', type=str, help='Output folder for images')
 
     args = parser.parse_args()
     set_random_seed(args.seed)
