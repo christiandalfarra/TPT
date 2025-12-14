@@ -211,7 +211,7 @@ def main_worker(gpu, args):
 
         #val_dataset = build_dataset(set_id, data_transform, args.data, mode=args.dataset_mode)
         # Usa build_subdataset per limitare il numero di campioni come richiesto
-        val_dataset = build_subdataset(set_id, data_transform, args.data, mode=args.dataset_mode, max_samples=800)
+        val_dataset = build_subdataset(set_id, data_transform, args.data, mode=args.dataset_mode, max_samples=2000)
         print("number of test samples: {}".format(len(val_dataset)))
         val_loader = torch.utils.data.DataLoader(
                     val_dataset,

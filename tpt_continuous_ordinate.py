@@ -212,7 +212,7 @@ def main_worker(gpu, args):
 
         #val_dataset = build_dataset(set_id, data_transform, args.data, mode=args.dataset_mode)
         # Usa build_subdataset per limitare il numero di campioni come richiesto
-        val_dataset = build_subdataset_sorted(set_id, data_transform, args.data, mode=args.dataset_mode, max_samples=800)
+        val_dataset = build_subdataset_sorted(set_id, data_transform, args.data, mode=args.dataset_mode, max_samples=2000)
         
         # --- MODIFICA 1: Ordinamento Indici ---
         # Se stiamo usando un subset casuale, gli indici sono disordinati (es. 5, 100, 2).
