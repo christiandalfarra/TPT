@@ -229,6 +229,17 @@ def main_worker(gpu, args):
                     batch_size=batchsize, 
                     shuffle=False, # --- MODIFICA 2: Shuffle disabilitato per mantenere l'ordine
                     num_workers=args.workers, pin_memory=True)
+        label_preview = None
+        if hasattr(val_dataset, 'indices'):
+            base_ds = getattr(val_dataset, 'dataset', None)
+            if base_ds is not None and hasattr(base_ds, 'targets'):
+                preview_idx = val_dataset.indices[:min(10, len(val_dataset.indices))]
+                label_preview = [base_ds.targets[idx] for idx in preview_idx]
+        elif hasattr(val_dataset, 'targets'):
+            preview_idx = range(min(10, len(val_dataset)))
+            label_preview = [val_dataset.targets[idx] for idx in preview_idx]
+        if label_preview is not None:
+            print(f"First labels: {label_preview}")
             
         results[set_id] = test_time_adapt_eval(val_loader, model, model_state, optimizer, optim_state, scaler, args)
         del val_dataset, val_loader
@@ -352,7 +363,7 @@ def test_time_adapt_eval(val_loader, model, model_state, optimizer, optim_state,
     
     # Salviamo i dati continui su CSV se attivo
     if args.continuous:
-        csv_filename = f"continuous_analysis_lr{args.lr}_reset{args.reset_interval}.csv"
+        csv_filename = f"continuous_analysis_sorted_lr{args.lr}_reset{args.reset_interval}.csv"
         csv_path = csv_filename
         #os.makedirs("../Trends", exist_ok=True) # Rimossa cartella extra come richiesto precedentemente
         with open(csv_path, 'w', newline='') as csvfile:
