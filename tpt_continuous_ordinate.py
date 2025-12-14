@@ -363,7 +363,7 @@ def test_time_adapt_eval(val_loader, model, model_state, optimizer, optim_state,
     
     # Salviamo i dati continui su CSV se attivo
     if args.continuous:
-        csv_filename = f"continuous_analysis_sorted_lr{args.lr}_reset{args.reset_interval}.csv"
+        csv_filename = f"inr_continuous_analysis_sorted_lr{args.lr}_reset{args.reset_interval}.csv"
         csv_path = csv_filename
         #os.makedirs("../Trends", exist_ok=True) # Rimossa cartella extra come richiesto precedentemente
         with open(csv_path, 'w', newline='') as csvfile:

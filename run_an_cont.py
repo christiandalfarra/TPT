@@ -6,7 +6,7 @@ import time
 # --- CONFIGURAZIONE ---
 
 # Percorso al dataset ImageNet-A (MODIFICA QUESTO)
-DATA_PATH = "../datasets/imagenet-adversarial" 
+DATA_PATH = "../datasets/imagenet-rendition" 
 
 # Lista degli script da testare
 scripts = [
@@ -60,7 +60,7 @@ def run_experiment():
                     sys.executable,   # Percorso all'interprete python corrente
                     script_file,      # Il file .py
                     DATA_PATH,        # Argomento posizionale 'data'
-                    "--test_sets", "A",  # Dataset ImageNet-A
+                    "--test_sets", "R",  # Dataset ImageNet-A
                     "--ctx_init", "a_photo_of_a", # Contestualizzazione
                     "-b", "64",        # Batch size (numero di viste)
                     "--selection_p", "0.1", # Probabilità di selezione
