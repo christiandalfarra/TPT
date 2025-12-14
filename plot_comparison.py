@@ -6,7 +6,7 @@ import os
 def plot_comparison():
     # Cerca tutti i file CSV generati (adatta il pattern al nome dei tuoi file output)
     # Esempio pattern: "continuous_analysis_*.csv"
-    csv_files = glob.glob("continuous_analysis_*.csv")
+    csv_files = glob.glob("inr_continuous_analysis_*.csv")
     
     if not csv_files:
         print("Nessun CSV trovato per il plotting.")
