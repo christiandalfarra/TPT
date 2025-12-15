@@ -10,6 +10,7 @@ import torch.utils.data
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 from torch.utils.data import DataLoader, ConcatDataset, Subset
+import numpy as np
 
 try:
     from torchvision.transforms import InterpolationMode
@@ -34,6 +35,8 @@ def get_args():
     parser.add_argument('--ctx_init', default=None, type=str)
     parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--steps', default=1, type=int, help='TTA optimization steps per batch')
+    # ADDED: Argument to control dataset size
+    parser.add_argument('--n_samples', default=2000, type=int, help='Total number of images to use')
     return parser.parse_args()
 
 # --- ENTROPY LOSS ---
@@ -44,27 +47,22 @@ def avg_entropy(outputs):
     avg_logits = torch.clamp(avg_logits, min=min_real)
     return -(avg_logits * torch.exp(avg_logits)).sum(dim=-1)
 
-import numpy as np
-
 def main():
     args = get_args()
     set_random_seed(args.seed)
     torch.cuda.set_device(args.gpu)
     
-    # 1. SETUP MODEL (Standard TPT Setup)
+    # 1. SETUP MODEL
     print(f"=> Creating model: {args.arch}")
-    # We use standard CoOp setup but will update it continuously
     model = get_coop(args.arch, "I", args.gpu, args.n_ctx, args.ctx_init)
     model = model.cuda()
     model.reset_classnames(imagenet_classes, args.arch)
     
-    # Freeze everything except prompt learner
     for name, param in model.named_parameters():
         if "prompt_learner" not in name:
             param.requires_grad_(False)
     
-    # 2. DATA LOADING LOGIC
-    # ImageNet-C transforms
+    # 2. DATA LOADING
     normalize = transforms.Normalize(mean=[0.48145466, 0.4578275, 0.40821073],
                                      std=[0.26862954, 0.26130258, 0.27577711])
     preprocess = transforms.Compose([
@@ -74,23 +72,30 @@ def main():
         normalize,
     ])
 
-    # Find all weather corruptions in the provided root
-    # Assumes structure: args.data/corruption_name/severity/...
-    # Adjust this path logic if your folder structure differs!
     corruptions = sorted([d for d in os.listdir(args.data) if os.path.isdir(os.path.join(args.data, d))])
     print(f"=> Found corruptions: {corruptions}")
     
     datasets_list = []
     for c in corruptions:
-        # Construct path to severity folder (e.g., weather/fog/5)
         path = os.path.join(args.data, c, str(args.severity))
         if not os.path.exists(path):
-            # Fallback: maybe the folder IS the severity folder?
             path = os.path.join(args.data, c)
         
-        print(f"Loading {c} from {path}...")
         try:
             d = datasets.ImageFolder(root=path, transform=preprocess)
+            # --- SUBSAMPLING LOGIC PER DOMAIN ---
+            # To preserve the "Sorted" structure (Domain A -> Domain B), we must
+            # subsample equally from each domain NOW, before concatenating.
+            # Calculate how many images per domain we need to reach total n_samples
+            samples_per_domain = args.n_samples // len(corruptions)
+            if len(d) > samples_per_domain:
+                # Randomly pick indices for this domain to keep it representative
+                indices = np.random.choice(len(d), samples_per_domain, replace=False)
+                d = Subset(d, indices)
+                print(f"   -> Loaded {c}: Subsampled to {len(d)} images")
+            else:
+                print(f"   -> Loaded {c}: Keeping all {len(d)} images (less than target)")
+            
             datasets_list.append(d)
         except:
             print(f"Skipping {c}, valid ImageFolder not found.")
@@ -100,10 +105,10 @@ def main():
         return
 
     full_dataset = ConcatDataset(datasets_list)
-    print(f"=> Total images: {len(full_dataset)}")
+    print(f"=> Total images for analysis: {len(full_dataset)}")
 
-    # 3. ANALYSIS LOOP: DIFFERENT LEARNING RATES
-    learning_rates = [1e-2, 1e-3, 1e-4] # Define your LRs here
+    # 3. ANALYSIS LOOP
+    learning_rates = [1e-2, 1e-3, 1e-4]
     
     print("\n" + "="*50)
     print(" STARTING ANALYSIS: CASUAL vs SORTED ")
@@ -113,12 +118,14 @@ def main():
         print(f"\n>>> Analyzing Learning Rate: {lr}")
         
         # --- MODE A: CASUAL (Shuffled) ---
+        # Shuffle=True mixes the domains (Fog, Snow, etc.) together
         print("Mode: CASUAL (Shuffling data...)")
         loader_casual = DataLoader(full_dataset, batch_size=args.batch_size, shuffle=True, 
                                    num_workers=4, pin_memory=True)
         acc_casual = run_continual_tpt(loader_casual, model, lr, args, "Casual")
 
         # --- MODE B: SORTED (Sequential) ---
+        # Shuffle=False keeps the order of concatenation (Domain 1 -> Domain 2 -> ...)
         print("Mode: SORTED (Sequential data...)")
         loader_sorted = DataLoader(full_dataset, batch_size=args.batch_size, shuffle=False, 
                                    num_workers=4, pin_memory=True)
@@ -127,14 +134,11 @@ def main():
         print(f"RESULT [LR={lr}]: Casual={acc_casual:.2f}% | Sorted={acc_sorted:.2f}%")
 
 def run_continual_tpt(loader, base_model, lr, args, desc):
-    # Reset model to initial state for a fair start
     base_model.reset() 
-    model = base_model # Reference
+    model = base_model 
     
-    # CONTINUAL OPTIMIZER: We optimize the SAME parameters across batches
     trainable_param = model.prompt_learner.parameters()
     optimizer = torch.optim.AdamW(trainable_param, lr=lr)
-    # Using GradScaler for mixed precision (TPT default)
     scaler = torch.cuda.amp.GradScaler(init_scale=1000)
 
     top1 = 0
@@ -142,17 +146,11 @@ def run_continual_tpt(loader, base_model, lr, args, desc):
     
     model.eval()
     
-    # We iterate through the stream
     for i, (images, target) in enumerate(loader):
         images = images.cuda(args.gpu, non_blocking=True)
         target = target.cuda(args.gpu, non_blocking=True)
-
-        # --- TTA Step (Continual) ---
-        # We assume 'images' is a batch.
-        # In TPT, they often use augmented views. For simplicity here, we use the single image 
-        # (or you can add AugMix logic from the repo if you want strictly standard TPT).
-        # Standard TPT minimizes entropy on the test batch.
         
+        # Online TTA: Adapt on current batch
         for _ in range(args.steps):
             with torch.cuda.amp.autocast():
                 output = model(images)
@@ -163,8 +161,7 @@ def run_continual_tpt(loader, base_model, lr, args, desc):
             scaler.step(optimizer)
             scaler.update()
         
-        # --- Inference Step ---
-        # Evaluate on the SAME batch after adaptation (Online TTA standard)
+        # Inference
         with torch.no_grad():
             with torch.cuda.amp.autocast():
                 output = model(images)
@@ -173,7 +170,8 @@ def run_continual_tpt(loader, base_model, lr, args, desc):
         top1 += acc1[0].item() * images.size(0)
         total += images.size(0)
         
-        if i % 10 == 0:
+        # Less frequent printing since dataset is smaller
+        if i % 5 == 0: 
             print(f"[{desc}] Step {i}/{len(loader)} | Acc: {acc1[0].item():.2f}% | RunAvg: {top1/total:.2f}%")
 
     final_acc = top1 / total
