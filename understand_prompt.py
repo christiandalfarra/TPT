@@ -293,7 +293,7 @@ def test_time_adapt_eval(val_loader, model, model_state, optimizer, optim_state,
     continuous_history = []
     
     # Crea cartella per salvare i tensori dei prompt se richiesto
-    prompt_save_dir = f"prompt_snapshots_lr{args.lr}_reset{args.reset_interval}"
+    prompt_save_dir = f"prompt_snapshots_sorted_lr{args.lr}_reset{args.reset_interval}"
     if args.save_prompts:
         os.makedirs(prompt_save_dir, exist_ok=True)
 
@@ -407,7 +407,7 @@ def test_time_adapt_eval(val_loader, model, model_state, optimizer, optim_state,
     
     # Salviamo i dati continui su CSV se attivo
     if args.continuous:
-        csv_filename = f"inr_continuous_analysis_casual_lr{args.lr}_reset{args.reset_interval}.csv"
+        csv_filename = f"inr_continuous_analysis_sorted_lr{args.lr}_reset{args.reset_interval}.csv"
         csv_path = csv_filename
         os.makedirs("../Trends", exist_ok=True)
         with open(csv_path, 'w', newline='') as csvfile:
