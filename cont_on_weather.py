@@ -134,11 +134,17 @@ def main():
         print(f"RESULT [LR={lr}]: Casual={acc_casual:.2f}% | Sorted={acc_sorted:.2f}%")
 
 def run_continual_tpt(loader, base_model, lr, args, desc):
-    base_model.reset() 
-    model = base_model 
+    # --- FIX: Wrap reset in no_grad ---
+    with torch.no_grad():
+        base_model.reset() 
     
+    model = base_model # Reference
+    
+    # CONTINUAL OPTIMIZER: We optimize the SAME parameters across batches
     trainable_param = model.prompt_learner.parameters()
     optimizer = torch.optim.AdamW(trainable_param, lr=lr)
+    
+    # Using GradScaler for mixed precision (TPT default)
     scaler = torch.cuda.amp.GradScaler(init_scale=1000)
 
     top1 = 0
@@ -146,11 +152,12 @@ def run_continual_tpt(loader, base_model, lr, args, desc):
     
     model.eval()
     
+    # We iterate through the stream
     for i, (images, target) in enumerate(loader):
         images = images.cuda(args.gpu, non_blocking=True)
         target = target.cuda(args.gpu, non_blocking=True)
-        
-        # Online TTA: Adapt on current batch
+
+        # --- TTA Step (Continual) ---
         for _ in range(args.steps):
             with torch.cuda.amp.autocast():
                 output = model(images)
@@ -161,7 +168,7 @@ def run_continual_tpt(loader, base_model, lr, args, desc):
             scaler.step(optimizer)
             scaler.update()
         
-        # Inference
+        # --- Inference Step ---
         with torch.no_grad():
             with torch.cuda.amp.autocast():
                 output = model(images)
@@ -170,12 +177,10 @@ def run_continual_tpt(loader, base_model, lr, args, desc):
         top1 += acc1[0].item() * images.size(0)
         total += images.size(0)
         
-        # Less frequent printing since dataset is smaller
-        if i % 5 == 0: 
+        if i % 5 == 0:
             print(f"[{desc}] Step {i}/{len(loader)} | Acc: {acc1[0].item():.2f}% | RunAvg: {top1/total:.2f}%")
 
     final_acc = top1 / total
     return final_acc
-
 if __name__ == '__main__':
     main()
