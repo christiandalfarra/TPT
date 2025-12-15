@@ -154,7 +154,7 @@ def main():
     print(f"=> Total images: {len(full_dataset)}")
 
     # 3. ANALYSIS LOOP
-    learning_rates = [1e-2, 1e-3, 1e-4]
+    learning_rates = [1e-5]
     
     for lr in learning_rates:
         torch.cuda.empty_cache()
