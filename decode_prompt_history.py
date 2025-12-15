@@ -18,7 +18,7 @@ def main():
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Loading CLIP {args.arch} on {device}...")
-    model, _ = clip.load(args.arch, device=device)
+    model, _ , _ = clip.load(args.arch, device=device)
     
     # 1. Estraiamo la matrice di embedding di tutte le parole conosciute da CLIP
     token_embeddings = model.token_embedding.weight.detach()
