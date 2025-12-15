@@ -23,6 +23,17 @@ from clip.custom_clip import get_coop
 from data.imagnet_prompts import imagenet_classes
 from utils.tools import set_random_seed, accuracy
 
+from torch.utils.checkpoint import checkpoint
+import torch.nn as nn
+
+class CheckpointSequential(nn.Sequential):
+    def forward(self, x):
+        for module in self:
+            # Checkpoint salva memoria non memorizzando le attivazioni intermedie
+            # use_reentrant=False è consigliato per le versioni recenti di PyTorch
+            x = checkpoint(module, x, use_reentrant=False)
+        return x
+
 # --- ARGS ---
 def get_args():
     parser = argparse.ArgumentParser(description='TPT Weather Analysis: Casual vs Sorted')
@@ -52,17 +63,30 @@ def main():
     set_random_seed(args.seed)
     torch.cuda.set_device(args.gpu)
     
-    # 1. SETUP MODEL
+    # --- 1. SETUP MODEL ---
     print(f"=> Creating model: {args.arch}")
     model = get_coop(args.arch, "I", args.gpu, args.n_ctx, args.ctx_init)
     model = model.cuda()
     model.reset_classnames(imagenet_classes, args.arch)
     
+    # Freeze standard parameters
     for name, param in model.named_parameters():
         if "prompt_learner" not in name:
             param.requires_grad_(False)
+
+    # --- FIX MEMORIA (Gradient Checkpointing) ---
+    # Applichiamo il patch al Transformer del Text Encoder.
+    # Questo permette di gestire 1000 classi senza OOM.
+    print("=> Applicazione Gradient Checkpointing... (Risparmio Memoria Attivo)")
+    if hasattr(model, 'text_encoder') and hasattr(model.text_encoder, 'transformer'):
+        original_blocks = model.text_encoder.transformer.resblocks
+        # Sostituiamo i blocchi normali con quelli "checkpointed"
+        model.text_encoder.transformer.resblocks = CheckpointSequential(*list(original_blocks))
+    else:
+        print("ATTENZIONE: Impossibile applicare il fix di memoria (struttura modello diversa?)")
+    # --------------------------------------------
     
-    # 2. DATA LOADING
+    # --- 2. DATA LOADING ---
     normalize = transforms.Normalize(mean=[0.48145466, 0.4578275, 0.40821073],
                                      std=[0.26862954, 0.26130258, 0.27577711])
     preprocess = transforms.Compose([
@@ -72,6 +96,7 @@ def main():
         normalize,
     ])
 
+    # Logica caricamento Weather (gestisce subfolders)
     corruptions = sorted([d for d in os.listdir(args.data) if os.path.isdir(os.path.join(args.data, d))])
     print(f"=> Found corruptions: {corruptions}")
     
@@ -83,7 +108,8 @@ def main():
         
         try:
             d = datasets.ImageFolder(root=path, transform=preprocess)
-            # Subsample per domain to maintain balance
+            
+            # Subsampling bilanciato per mantenere la struttura "Sorted"
             samples_per_domain = args.n_samples // len(corruptions)
             if len(d) > samples_per_domain:
                 indices = np.random.choice(len(d), samples_per_domain, replace=False)
@@ -103,7 +129,7 @@ def main():
     full_dataset = ConcatDataset(datasets_list)
     print(f"=> Total images for analysis: {len(full_dataset)}")
 
-    # 3. ANALYSIS LOOP
+    # --- 3. ANALYSIS LOOP ---
     learning_rates = [1e-2, 1e-3, 1e-4]
     
     print("\n" + "="*50)
@@ -111,7 +137,7 @@ def main():
     print("="*50)
 
     for lr in learning_rates:
-        # Clear GPU cache before each major experiment to prevent OOM
+        # Pulizia Cache critica prima di ogni run
         torch.cuda.empty_cache()
         print(f"\n>>> Analyzing Learning Rate: {lr}")
         
@@ -121,8 +147,10 @@ def main():
                                    num_workers=4, pin_memory=True)
         acc_casual = run_continual_tpt(loader_casual, model, lr, args, "Casual")
 
+        # Pulizia Cache tra i due esperimenti
+        torch.cuda.empty_cache()
+
         # --- MODE B: SORTED ---
-        torch.cuda.empty_cache() # Clear again
         print("Mode: SORTED (Sequential data...)")
         loader_sorted = DataLoader(full_dataset, batch_size=args.batch_size, shuffle=False, 
                                    num_workers=4, pin_memory=True)
