@@ -41,7 +41,7 @@ def main():
     print(f"Output verrà salvato in: {args.output}")
 
     # Apriamo il file in scrittura
-    with open(args.output, 'w', encoding='utf-8') as f_out:
+    with open(args.output, 'w', encoding='utf-16') as f_out:
         # Usiamo tqdm per mostrare una barra di progresso invece di stampare le parole
         for fname in tqdm(files, desc="Processing"):
             
