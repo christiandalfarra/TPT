@@ -29,13 +29,13 @@ def get_args():
     parser.add_argument('--data', required=True, help='Path to weather root (e.g., ./weather)')
     parser.add_argument('--severity', default=5, type=int, help='Severity level to load (1-5)')
     parser.add_argument('--arch', default='RN50', help='CLIP backbone architecture')
-    parser.add_argument('--batch-size', default=64, type=int)
+    # CHANGED: Default batch size reduced to 32 to prevent OOM
+    parser.add_argument('--batch-size', default=32, type=int)
     parser.add_argument('--gpu', default=0, type=int)
     parser.add_argument('--n_ctx', default=4, type=int, help='number of tunable tokens')
     parser.add_argument('--ctx_init', default=None, type=str)
     parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--steps', default=1, type=int, help='TTA optimization steps per batch')
-    # ADDED: Argument to control dataset size
     parser.add_argument('--n_samples', default=2000, type=int, help='Total number of images to use')
     return parser.parse_args()
 
@@ -83,18 +83,14 @@ def main():
         
         try:
             d = datasets.ImageFolder(root=path, transform=preprocess)
-            # --- SUBSAMPLING LOGIC PER DOMAIN ---
-            # To preserve the "Sorted" structure (Domain A -> Domain B), we must
-            # subsample equally from each domain NOW, before concatenating.
-            # Calculate how many images per domain we need to reach total n_samples
+            # Subsample per domain to maintain balance
             samples_per_domain = args.n_samples // len(corruptions)
             if len(d) > samples_per_domain:
-                # Randomly pick indices for this domain to keep it representative
                 indices = np.random.choice(len(d), samples_per_domain, replace=False)
                 d = Subset(d, indices)
                 print(f"   -> Loaded {c}: Subsampled to {len(d)} images")
             else:
-                print(f"   -> Loaded {c}: Keeping all {len(d)} images (less than target)")
+                print(f"   -> Loaded {c}: Keeping all {len(d)} images")
             
             datasets_list.append(d)
         except:
@@ -115,17 +111,18 @@ def main():
     print("="*50)
 
     for lr in learning_rates:
+        # Clear GPU cache before each major experiment to prevent OOM
+        torch.cuda.empty_cache()
         print(f"\n>>> Analyzing Learning Rate: {lr}")
         
-        # --- MODE A: CASUAL (Shuffled) ---
-        # Shuffle=True mixes the domains (Fog, Snow, etc.) together
+        # --- MODE A: CASUAL ---
         print("Mode: CASUAL (Shuffling data...)")
         loader_casual = DataLoader(full_dataset, batch_size=args.batch_size, shuffle=True, 
                                    num_workers=4, pin_memory=True)
         acc_casual = run_continual_tpt(loader_casual, model, lr, args, "Casual")
 
-        # --- MODE B: SORTED (Sequential) ---
-        # Shuffle=False keeps the order of concatenation (Domain 1 -> Domain 2 -> ...)
+        # --- MODE B: SORTED ---
+        torch.cuda.empty_cache() # Clear again
         print("Mode: SORTED (Sequential data...)")
         loader_sorted = DataLoader(full_dataset, batch_size=args.batch_size, shuffle=False, 
                                    num_workers=4, pin_memory=True)
@@ -134,32 +131,31 @@ def main():
         print(f"RESULT [LR={lr}]: Casual={acc_casual:.2f}% | Sorted={acc_sorted:.2f}%")
 
 def run_continual_tpt(loader, base_model, lr, args, desc):
-    # --- FIX: Wrap reset in no_grad ---
+    # Fix 1: Wrap reset in no_grad to avoid 'leaf Variable' error
     with torch.no_grad():
         base_model.reset() 
     
-    model = base_model # Reference
+    model = base_model 
     
-    # CONTINUAL OPTIMIZER: We optimize the SAME parameters across batches
     trainable_param = model.prompt_learner.parameters()
     optimizer = torch.optim.AdamW(trainable_param, lr=lr)
     
-    # Using GradScaler for mixed precision (TPT default)
-    scaler = torch.cuda.amp.GradScaler(init_scale=1000)
+    # Fix 2: Use modern torch.amp syntax
+    scaler = torch.amp.GradScaler('cuda', init_scale=1000)
 
     top1 = 0
     total = 0
     
     model.eval()
     
-    # We iterate through the stream
     for i, (images, target) in enumerate(loader):
         images = images.cuda(args.gpu, non_blocking=True)
         target = target.cuda(args.gpu, non_blocking=True)
 
-        # --- TTA Step (Continual) ---
+        # --- TTA Step ---
         for _ in range(args.steps):
-            with torch.cuda.amp.autocast():
+            # Fix 3: Modern autocast syntax
+            with torch.amp.autocast('cuda'):
                 output = model(images)
                 loss = avg_entropy(output)
             
@@ -170,17 +166,18 @@ def run_continual_tpt(loader, base_model, lr, args, desc):
         
         # --- Inference Step ---
         with torch.no_grad():
-            with torch.cuda.amp.autocast():
+            with torch.amp.autocast('cuda'):
                 output = model(images)
         
         acc1, _ = accuracy(output, target, topk=(1, 5))
         top1 += acc1[0].item() * images.size(0)
         total += images.size(0)
         
-        if i % 5 == 0:
+        if i % 10 == 0:
             print(f"[{desc}] Step {i}/{len(loader)} | Acc: {acc1[0].item():.2f}% | RunAvg: {top1/total:.2f}%")
 
     final_acc = top1 / total
     return final_acc
+
 if __name__ == '__main__':
     main()
