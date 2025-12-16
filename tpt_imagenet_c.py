@@ -55,46 +55,58 @@ def test_time_tuning(model, inputs, optimizer, scaler, args):
         image_feature, pgen_ctx = inputs
         pgen_ctx.requires_grad = True
         optimizer = torch.optim.AdamW([pgen_ctx], args.lr)
-    
-    selected_idx = None
-    
-    # --- OPTIMIZATION: Micro-batch size ---
-    # Process 16 images at a time instead of 64. 
-    # This reduces VRAM usage significantly.
-    micro_batch_size = 16 
-    
+
+    # Calculate how many samples to use for optimization
+    # e.g., if batch=64 and p=0.1, we select top 6 images.
+    num_samples = inputs.size(0)
+    select_k = int(num_samples * args.selection_p)
+    if select_k == 0:
+        select_k = 1
+
     for j in range(args.tta_steps):
-        with torch.cuda.amp.autocast():
-            if args.cocoop:
-                output = model((image_feature, pgen_ctx))
-            else:
-                # --- MODIFIED BLOCK START ---
-                # Instead of running all 64 images at once: output = model(inputs)
-                # We split them into chunks and concatenate the results.
-                output_list = []
-                for k in range(0, inputs.size(0), micro_batch_size):
-                    input_chunk = inputs[k : k + micro_batch_size]
-                    # The text encoder runs multiple times, but visual encoder (heavy part)
-                    # is now processed in small manageable slices.
-                    output_chunk = model(input_chunk) 
-                    output_list.append(output_chunk)
-                
-                output = torch.cat(output_list, dim=0)
-                # --- MODIFIED BLOCK END ---
-
-            if selected_idx is not None:
-                output = output[selected_idx]
-            else:
-                output, selected_idx = select_confident_samples(output, args.selection_p)
-
-            loss = avg_entropy(output)
+        # --- PHASE 1: SELECTION (Inference Only - No Gradients) ---
+        # Run all images to find which ones are "confident".
+        # We use torch.no_grad() so this consumes very little memory.
         
         optimizer.zero_grad()
-        # compute gradient and do SGD step
+        all_logits = []
+        
+        # Process inference in chunks to be extra safe
+        inference_batch_size = 16 
+        
+        with torch.no_grad():
+            with torch.cuda.amp.autocast():
+                for k in range(0, num_samples, inference_batch_size):
+                    batch_input = inputs[k : k + inference_batch_size]
+                    batch_output = model(batch_input)
+                    all_logits.append(batch_output)
+        
+        # Concatenate results to look like a full batch
+        all_logits = torch.cat(all_logits, dim=0)
+
+        # Select the indices of the most confident samples
+        # select_confident_samples returns (values, indices)
+        _, selected_idx = select_confident_samples(all_logits, args.selection_p)
+        
+        # --- PHASE 2: OPTIMIZATION (With Gradients) ---
+        # Now we only train on the small subset of selected images.
+        # This creates a computational graph for ONLY ~6 images, not 64.
+        
+        selected_inputs = inputs[selected_idx]
+        
+        with torch.cuda.amp.autocast():
+            # This is the only heavy step, but now input is tiny.
+            if args.cocoop:
+                output = model((image_feature, pgen_ctx)) # Logic usually differs for CoOp, but minimal impact here
+            else:
+                output = model(selected_inputs)
+                
+            loss = avg_entropy(output)
+
         scaler.scale(loss).backward()
-        # Unscales the gradients of optimizer's assigned params in-place
         scaler.step(optimizer)
         scaler.update()
+
     if args.cocoop:
         return pgen_ctx
 
