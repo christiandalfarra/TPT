@@ -14,6 +14,7 @@ import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets # This is the module we need to preserve
+import gc
 
 try:
     from torchvision.transforms import InterpolationMode
@@ -56,48 +57,69 @@ def test_time_tuning(model, inputs, optimizer, scaler, args):
         pgen_ctx.requires_grad = True
         optimizer = torch.optim.AdamW([pgen_ctx], args.lr)
 
-    # Calculate how many samples to use for optimization
-    # e.g., if batch=64 and p=0.1, we select top 6 images.
     num_samples = inputs.size(0)
+    # Calculate how many samples to select (e.g. 10% of 64 = 6)
     select_k = int(num_samples * args.selection_p)
     if select_k == 0:
         select_k = 1
 
     for j in range(args.tta_steps):
-        # --- PHASE 1: SELECTION (Inference Only - No Gradients) ---
-        # Run all images to find which ones are "confident".
-        # We use torch.no_grad() so this consumes very little memory.
+        # ==================================================================
+        # PHASE 1: SELECTION (Inference Only - Ultra Low Memory)
+        # ==================================================================
+        # We run images in tiny batches (size 2) just to get their entropy.
+        # We use torch.no_grad() so NO gradients are stored.
         
         optimizer.zero_grad()
-        all_logits = []
+        entropies = []
         
-        # Process inference in chunks to be extra safe
-        inference_batch_size = 16 
+        # Ultra-small inference batch size to prevent OOM
+        # If this still fails, change this to 1
+        inf_batch_size = 2  
         
         with torch.no_grad():
             with torch.cuda.amp.autocast():
-                for k in range(0, num_samples, inference_batch_size):
-                    batch_input = inputs[k : k + inference_batch_size]
-                    batch_output = model(batch_input)
-                    all_logits.append(batch_output)
+                for k in range(0, num_samples, inf_batch_size):
+                    input_chunk = inputs[k : k + inf_batch_size]
+                    
+                    # Forward pass
+                    if args.cocoop:
+                         # Handle CoCoOp split if necessary, usually not hit in this TPT config
+                         output_chunk = model((image_feature, pgen_ctx)) 
+                    else:
+                         output_chunk = model(input_chunk)
+                    
+                    # Calculate entropy and move to CPU immediately to free GPU RAM
+                    e = avg_entropy(output_chunk).detach().cpu()
+                    entropies.append(e)
+                    
+                    # Force cleanup
+                    del output_chunk
+                    del e
         
-        # Concatenate results to look like a full batch
-        all_logits = torch.cat(all_logits, dim=0)
+        # Combine entropies (now on CPU)
+        all_entropies = torch.cat(entropies) # CPU tensor
+        
+        # Find the indices of the lowest entropy (most confident) samples
+        _, sort_idx = torch.sort(all_entropies, descending=False)
+        selected_idx = sort_idx[:select_k].to(inputs.device) # Move indices back to GPU
 
-        # Select the indices of the most confident samples
-        # select_confident_samples returns (values, indices)
-        _, selected_idx = select_confident_samples(all_logits, args.selection_p)
-        
-        # --- PHASE 2: OPTIMIZATION (With Gradients) ---
-        # Now we only train on the small subset of selected images.
-        # This creates a computational graph for ONLY ~6 images, not 64.
+        # Clean up memory before the heavy training step
+        del all_entropies
+        del entropies
+        torch.cuda.empty_cache()
+        gc.collect()
+
+        # ==================================================================
+        # PHASE 2: OPTIMIZATION (Training on Selected Samples)
+        # ==================================================================
+        # We now run the forward pass WITH gradients, but ONLY on the ~6 selected images.
         
         selected_inputs = inputs[selected_idx]
         
         with torch.cuda.amp.autocast():
-            # This is the only heavy step, but now input is tiny.
             if args.cocoop:
-                output = model((image_feature, pgen_ctx)) # Logic usually differs for CoOp, but minimal impact here
+                output = model((image_feature, pgen_ctx))
             else:
                 output = model(selected_inputs)
                 
@@ -106,12 +128,16 @@ def test_time_tuning(model, inputs, optimizer, scaler, args):
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
+        
+        # Final cleanup for next step
+        del output
+        del loss
+        torch.cuda.empty_cache()
 
     if args.cocoop:
         return pgen_ctx
 
     return
-
 
 def main():
     args = parser.parse_args()
