@@ -58,63 +58,54 @@ def test_time_tuning(model, inputs, optimizer, scaler, args):
         optimizer = torch.optim.AdamW([pgen_ctx], args.lr)
 
     num_samples = inputs.size(0)
-    # Calculate how many samples to select (e.g. 10% of 64 = 6)
+    # Select top 10% (e.g., 6 images out of 64)
     select_k = int(num_samples * args.selection_p)
     if select_k == 0:
         select_k = 1
 
     for j in range(args.tta_steps):
-        # ==================================================================
-        # PHASE 1: SELECTION (Inference Only - Ultra Low Memory)
-        # ==================================================================
-        # We run images in tiny batches (size 2) just to get their entropy.
-        # We use torch.no_grad() so NO gradients are stored.
-        
         optimizer.zero_grad()
         entropies = []
         
-        # Ultra-small inference batch size to prevent OOM
-        # If this still fails, change this to 1
-        inf_batch_size = 2  
+        # --- PHASE 1: SELECTION (Inference Only) ---
+        # Use batch size = 1 to get exact entropy per image 
+        # and minimize memory usage to the absolute limit.
+        inf_batch_size = 1
         
         with torch.no_grad():
             with torch.cuda.amp.autocast():
                 for k in range(0, num_samples, inf_batch_size):
                     input_chunk = inputs[k : k + inf_batch_size]
                     
-                    # Forward pass
                     if args.cocoop:
-                         # Handle CoCoOp split if necessary, usually not hit in this TPT config
                          output_chunk = model((image_feature, pgen_ctx)) 
                     else:
                          output_chunk = model(input_chunk)
                     
-                    # Calculate entropy and move to CPU immediately to free GPU RAM
+                    # Calculate entropy for this single image
+                    # detach() and cpu() move it out of VRAM immediately
                     e = avg_entropy(output_chunk).detach().cpu()
                     entropies.append(e)
                     
-                    # Force cleanup
+                    # Explicit deletion to help the garbage collector
                     del output_chunk
                     del e
         
-        # Combine entropies (now on CPU)
-        all_entropies = torch.cat(entropies) # CPU tensor
+        # FIX: Use stack() for scalars, not cat()
+        all_entropies = torch.stack(entropies) 
         
-        # Find the indices of the lowest entropy (most confident) samples
+        # Find indices of the most confident samples (lowest entropy)
         _, sort_idx = torch.sort(all_entropies, descending=False)
-        selected_idx = sort_idx[:select_k].to(inputs.device) # Move indices back to GPU
+        selected_idx = sort_idx[:select_k].to(inputs.device)
 
-        # Clean up memory before the heavy training step
+        # Cleanup
         del all_entropies
         del entropies
         torch.cuda.empty_cache()
         gc.collect()
 
-        # ==================================================================
-        # PHASE 2: OPTIMIZATION (Training on Selected Samples)
-        # ==================================================================
-        # We now run the forward pass WITH gradients, but ONLY on the ~6 selected images.
-        
+        # --- PHASE 2: OPTIMIZATION (Training) ---
+        # Run gradients only on the small selection (e.g. 6 images)
         selected_inputs = inputs[selected_idx]
         
         with torch.cuda.amp.autocast():
@@ -129,7 +120,6 @@ def test_time_tuning(model, inputs, optimizer, scaler, args):
         scaler.step(optimizer)
         scaler.update()
         
-        # Final cleanup for next step
         del output
         del loss
         torch.cuda.empty_cache()
