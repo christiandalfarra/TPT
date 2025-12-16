@@ -13,7 +13,7 @@ import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.transforms as transforms
-import torchvision.datasets as datasets # Added for standard ImageFolder loading
+import torchvision.datasets as datasets # This is the module we need to preserve
 
 try:
     from torchvision.transforms import InterpolationMode
@@ -157,10 +157,11 @@ def main_worker(gpu, args):
 
     
     # iterating through eval datasets
-    datasets = args.test_sets.split("/")
+    # FIX: Renamed variable from 'datasets' to 'test_sets_list' to avoid shadowing imports
+    test_sets_list = args.test_sets.split("/") 
     results = {}
     
-    for set_id in datasets:
+    for set_id in test_sets_list:
         # --- Data Transform Setup ---
         if args.tpt:
             base_transform = transforms.Compose([
@@ -207,14 +208,13 @@ def main_worker(gpu, args):
                     model.reset_classnames(classnames, args.arch)
 
                 # Construct path: args.data/corruption_name/severity/
-                # Assumes args.data points to the root of ImageNet-C
-                # Folder structure assumed: args.data/<corruption>/<severity>/<class_folders>/<images>
                 valdir = os.path.join(args.data, corruption_name, str(args.severity))
                 
                 if not os.path.exists(valdir):
                     print(f"WARNING: Directory not found: {valdir}. Skipping.")
                     continue
 
+                # FIX: Now 'datasets' refers to the imported module, not the list variable
                 val_dataset = datasets.ImageFolder(valdir, data_transform)
                 print("number of test samples: {}".format(len(val_dataset)))
                 
@@ -275,14 +275,14 @@ def main_worker(gpu, args):
                 print("=> Acc. on testset [{}]: {}".format(set_id, results[set_id]))
 
     print("======== Result Summary ========")
-    print("params: nstep	lr	bs")
-    print("params: {}	{}	{}".format(args.tta_steps, args.lr, args.batch_size))
+    print("params: nstep\tlr\tbs")
+    print("params: {}\t{}\t{}".format(args.tta_steps, args.lr, args.batch_size))
     print("\t\t [set_id] \t\t Top-1 acc. \t\t Top-5 acc.")
     for id in results.keys():
-        print("{}".format(id), end="	")
+        print("{}".format(id), end="\t")
     print("\n")
     for id in results.keys():
-        print("{:.2f}".format(results[id][0]), end="	")
+        print("{:.2f}".format(results[id][0]), end="\t")
     print("\n")
 
 
