@@ -57,12 +57,30 @@ def test_time_tuning(model, inputs, optimizer, scaler, args):
         optimizer = torch.optim.AdamW([pgen_ctx], args.lr)
     
     selected_idx = None
+    
+    # --- OPTIMIZATION: Micro-batch size ---
+    # Process 16 images at a time instead of 64. 
+    # This reduces VRAM usage significantly.
+    micro_batch_size = 16 
+    
     for j in range(args.tta_steps):
         with torch.cuda.amp.autocast():
             if args.cocoop:
                 output = model((image_feature, pgen_ctx))
             else:
-                output = model(inputs) 
+                # --- MODIFIED BLOCK START ---
+                # Instead of running all 64 images at once: output = model(inputs)
+                # We split them into chunks and concatenate the results.
+                output_list = []
+                for k in range(0, inputs.size(0), micro_batch_size):
+                    input_chunk = inputs[k : k + micro_batch_size]
+                    # The text encoder runs multiple times, but visual encoder (heavy part)
+                    # is now processed in small manageable slices.
+                    output_chunk = model(input_chunk) 
+                    output_list.append(output_chunk)
+                
+                output = torch.cat(output_list, dim=0)
+                # --- MODIFIED BLOCK END ---
 
             if selected_idx is not None:
                 output = output[selected_idx]
