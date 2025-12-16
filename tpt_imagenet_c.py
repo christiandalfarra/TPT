@@ -67,9 +67,9 @@ def test_time_tuning(model, inputs, optimizer, scaler, args):
         optimizer.zero_grad()
         entropies = []
         
-        # --- PHASE 1: SELECTION (Inference Only) ---
-        # Use batch size = 1 to get exact entropy per image 
-        # and minimize memory usage to the absolute limit.
+        # ==================================================================
+        # PHASE 1: SELECTION (Inference Only)
+        # ==================================================================
         inf_batch_size = 1
         
         with torch.no_grad():
@@ -82,46 +82,63 @@ def test_time_tuning(model, inputs, optimizer, scaler, args):
                     else:
                          output_chunk = model(input_chunk)
                     
-                    # Calculate entropy for this single image
-                    # detach() and cpu() move it out of VRAM immediately
+                    # Calculate entropy, detach, move to CPU
                     e = avg_entropy(output_chunk).detach().cpu()
                     entropies.append(e)
                     
-                    # Explicit deletion to help the garbage collector
                     del output_chunk
                     del e
         
-        # FIX: Use stack() for scalars, not cat()
+        # Combine entropies
         all_entropies = torch.stack(entropies) 
         
-        # Find indices of the most confident samples (lowest entropy)
+        # Find indices of the most confident samples
         _, sort_idx = torch.sort(all_entropies, descending=False)
         selected_idx = sort_idx[:select_k].to(inputs.device)
 
-        # Cleanup
+        # Cleanup Phase 1
         del all_entropies
         del entropies
         torch.cuda.empty_cache()
         gc.collect()
 
-        # --- PHASE 2: OPTIMIZATION (Training) ---
-        # Run gradients only on the small selection (e.g. 6 images)
-        selected_inputs = inputs[selected_idx]
+        # ==================================================================
+        # PHASE 2: OPTIMIZATION (Gradient Accumulation)
+        # ==================================================================
+        # Instead of feeding all selected_inputs at once, we feed them 1 by 1.
         
-        with torch.cuda.amp.autocast():
-            if args.cocoop:
-                output = model((image_feature, pgen_ctx))
-            else:
-                output = model(selected_inputs)
-                
-            loss = avg_entropy(output)
+        train_batch_size = 1 # Absolute minimum memory usage
+        num_selected = selected_idx.size(0)
 
-        scaler.scale(loss).backward()
+        for k in range(0, num_selected, train_batch_size):
+            # 1. Get the tiny sub-batch of indices
+            sub_idx = selected_idx[k : k + train_batch_size]
+            sub_inputs = inputs[sub_idx]
+            
+            with torch.cuda.amp.autocast():
+                if args.cocoop:
+                    output = model((image_feature, pgen_ctx)) # Logic may vary for cocoop
+                else:
+                    output = model(sub_inputs)
+                
+                # 2. Calculate Loss
+                # We want the average entropy of the TOP K samples.
+                # Since we are processing them in chunks, we sum the entropy of this chunk
+                # and divide by the TOTAL number of selected samples (select_k).
+                loss = avg_entropy(output).sum() / select_k
+
+            # 3. Backward Pass (Accumulate Gradients)
+            scaler.scale(loss).backward()
+            
+            # 4. Immediate Cleanup
+            del output
+            del loss
+            del sub_inputs
+        
+        # 5. Step Optimizer (Apply collected gradients)
         scaler.step(optimizer)
         scaler.update()
         
-        del output
-        del loss
         torch.cuda.empty_cache()
 
     if args.cocoop:
