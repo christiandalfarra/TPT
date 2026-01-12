@@ -84,7 +84,7 @@ for i, lr in enumerate(lrs):
     ax.set_ylim(0, 100)
     
     # Linee verticali per i cambi di dominio (ogni 500 sample, su 2000 totali)
-    for domain_boundary in [500, 1000, 1500]:
+    for domain_boundary in [250, 500, 750, 1000]:
         ax.axvline(x=domain_boundary, color='gray', linestyle='--', alpha=0.3)
         
     if i > 0 and ax.get_legend(): ax.get_legend().remove()

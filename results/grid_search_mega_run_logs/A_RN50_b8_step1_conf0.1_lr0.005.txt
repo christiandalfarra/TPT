@@ -1,0 +1,31 @@
+Use GPU: 0 for training
+Initializing the contect with given words: [a_photo_of_a]
+Initial context: "a photo of a"
+Number of context words (tokens): 4
+=> Model created: visual backbone RN50
+=> Using native Torch AMP. Training in mixed precision.
+evaluating: A
+Riduzione dataset da 7500 a 800 immagini...
+number of test samples: 800
+tpt_classification.py:149: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = torch.cuda.amp.GradScaler(init_scale=1000)
+tpt_classification.py:62: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with torch.cuda.amp.autocast():
+tpt_classification.py:48: RuntimeWarning: divide by zero encountered in log
+  avg_logits = logits.logsumexp(dim=0) - np.log(logits.shape[0]) # avg_logits = logits.mean(0) [1, 1000]
+tpt_classification.py:291: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with torch.cuda.amp.autocast():
+Test: [199/800]	Time  0.170 ( 0.177)	Acc@1   0.00 ( 22.50)	Acc@5 100.00 ( 60.00)
+Test: [399/800]	Time  0.169 ( 0.173)	Acc@1   0.00 ( 21.50)	Acc@5   0.00 ( 55.75)
+Test: [599/800]	Time  0.171 ( 0.172)	Acc@1   0.00 ( 21.00)	Acc@5   0.00 ( 54.50)
+Test: [799/800]	Time  0.169 ( 0.172)	Acc@1   0.00 ( 20.88)	Acc@5 100.00 ( 53.38)
+ *  Acc@1 20.875 Acc@5 53.375
+=> Acc. on testset [A]: @1 20.875/ @5 53.375
+======== Result Summary ========
+params: nstep	lr	bs
+params: 1	0.005	8
+		 [set_id] 		 Top-1 acc. 		 Top-5 acc.
+A	
+
+20.88	
+
